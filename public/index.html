@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="开机">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>">
+  <title>远程开机</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:-apple-system,'Microsoft YaHei',sans-serif;
+      display:flex;justify-content:center;align-items:center;
+      min-height:100vh;min-height:100dvh;background:#0f0f0f;
+      -webkit-user-select:none;user-select:none;
+    }
+    .ct{padding:24px;max-width:400px;width:100%;text-align:center}
+    .icon{font-size:64px;margin-bottom:8px}
+    h1{color:#e0e0e0;font-size:22px;margin-bottom:2px}
+    .sub{color:#888;font-size:11px;margin-bottom:10px}
+    .badge{padding:5px 16px;border-radius:20px;font-size:12px;display:inline-block;margin-bottom:10px;min-width:180px}
+    .badge.on{background:#1a3a1a;color:#4eff4e}
+    .badge.off{background:#3a1a1a;color:#ff4e4e}
+    .badge.busy{background:#1a1a2a;color:#fc0}
+    .power-btn{
+      width:120px;height:120px;border-radius:50%;border:none;
+      background:linear-gradient(145deg,#1a4a1a,#0d2d0d);color:#4eff4e;
+      font-size:48px;cursor:pointer;
+      box-shadow:0 0 40px rgba(78,255,78,.2),0 8px 24px rgba(0,0,0,.5);
+      transition:all .2s;-webkit-tap-highlight-color:transparent;
+    }
+    .power-btn:active{transform:scale(.92);box-shadow:0 0 80px rgba(78,255,78,.5)}
+    .power-btn:disabled{opacity:.3;pointer-events:none}
+    .result{margin-top:10px;font-size:15px;min-height:22px}
+    .result.ok{color:#4eff4e}.result.err{color:#ff4e4e}.result.wait{color:#fc0}
+    .footer{margin-top:20px;padding-top:10px;border-top:1px solid #222;color:#555;font-size:10px;line-height:1.5}
+    .footer a{color:#999}
+    .note{color:#555;font-size:10px;margin-top:4px;line-height:1.5}
+  </style>
+</head>
+<body>
+  <div class="ct">
+    <div class="icon">🖥️</div>
+    <h1>远程开机</h1>
+    <p class="sub">00a6ebf7pwr</p>
+
+    <div class="badge busy" id="badge">⏳ 连接中…</div>
+    <div class="note" id="log"></div>
+
+    <button class="power-btn" id="btn" disabled onclick="doPress()">⏻</button>
+    <div class="result" id="result"></div>
+    <div class="footer">
+      MQTT 远程直连 · 无需公网 IP · 无需 App<br>
+      <span id="bname" style="color:#888"></span>
+    </div>
+  </div>
+
+  <script>
+    var TOKEN='00a6ebf7pwr';
+    var CMD='pcpower-'+TOKEN+'/cmd';
+    var STATE='pcpower-'+TOKEN+'/state';
+    var ok=false, cl=null, curServer='';
+
+    var SERVERS=[
+      {h:'test.mosquitto.org',p:8081},
+      {h:'broker-cn.emqx.io',p:8084},
+      {h:'broker.emqx.io',p:8084}
+    ];
+    var idx=0;
+
+    function $(id){return document.getElementById(id)}
+
+    function badge(s,c){ var e=$('badge'); e.className='badge '+s; e.textContent=c }
+
+    function doConn(){
+      if(idx>=SERVERS.length)idx=0;
+      var s=SERVERS[idx]; curServer=s.h+'';
+      $('log').textContent=s.h; $('bname').textContent='服务器: '+s.h;
+      badge('busy','⏳ 连接 '+s.h);
+
+      try{cl.end()}catch(_){}
+      cl=mqtt.connect('wss://'+s.h+':'+s.p+'/mqtt',{
+        clientId:'rem-'+TOKEN+'-'+Math.random().toString(16).slice(2,8),
+        keepalive:60,clean:true,connectTimeout:5000,reconnectPeriod:0
+      });
+
+      cl.on('connect',function(){
+        ok=true;$('log').textContent='';$('bname').textContent='服务器: '+s.h;
+        badge('on','🟢 已连接');
+        $('btn').disabled=false;
+        cl.subscribe(STATE);
+      });
+
+      cl.on('message',function(t,msg){
+        if(msg.toString()==='ok'){
+          $('result').className='result ok';$('result').textContent='✅ 开机信号已发送!';
+          setTimeout(function(){$('result').textContent='';$('result').className='result'},6000);
+        }
+      });
+
+      cl.on('close',function(){if(ok){ok=false;badge('off','🔴 已断开');$('btn').disabled=true} idx=(idx+1)%SERVERS.length; setTimeout(doConn,2000)});
+
+      cl.on('error',function(){idx=(idx+1)%SERVERS.length; setTimeout(doConn,1500)});
+    }
+
+    function doPress(){
+      if(!ok)return;
+      $('result').className='result wait';$('result').textContent='⏳ 发送中...';
+      $('btn').disabled=true;
+      cl.publish(CMD,'press',{qos:1},function(err){
+        if(!err){$('log').textContent='指令已发送 ↦'}
+        setTimeout(function(){if(ok)$('btn').disabled=false;$('result').textContent='';$('result').className='result'},2000);
+      });
+    }
+
+    doConn();
+  </script>
+</body>
+</html>
